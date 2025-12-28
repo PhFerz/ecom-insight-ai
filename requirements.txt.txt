@@ -1,4 +1,0 @@
-streamlit
-playwright==1.49.0
-google-generativeai
-pandas
