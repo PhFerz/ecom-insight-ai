@@ -1,57 +1,66 @@
-import streamlit as st
-import asyncio
+import subprocess
 import sys
 import os
+import asyncio
+
+# --- CLOUD SELF-REPAIR: Installs missing libraries automatically ---
+def install_dependencies():
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        print("Installing Playwright...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "playwright"])
+    
+    # Ensure Chromium is installed for Playwright
+    os.system("playwright install chromium")
+
+install_dependencies()
+
+import streamlit as st
 import pandas as pd
-from playwright.async_api import async_playwright
 import google.generativeai as genai
+from playwright.async_api import async_playwright
 
-# Streamlit Cloud Deployment Fix: Install browser if it's missing
-os.system("playwright install chromium")
-
-# Windows specific event loop fix
+# Windows event loop fix
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="E-Com Insight AI", page_icon="📈", layout="wide")
 
-# --- API KEY CONFIGURATION ---
-# It looks for GOOGLE_API_KEY in Streamlit Secrets first
+# --- SECURE API KEY ---
 try:
     GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
 except Exception:
-    # Hardcoded key as fallback for your initial testing
+    # Local fallback
     GOOGLE_API_KEY = "AIzaSyAk8edisBQjw-5egn2seKJgf2OgknsaV1M"
 
-# --- AI ENGINE ---
+# --- AI ANALYSIS ENGINE ---
 def analyze_market_intelligence(reviews_list):
     if not reviews_list:
-        return "Error: No data available for AI analysis."
+        return "No data available."
     
     try:
         genai.configure(api_key=GOOGLE_API_KEY)
         
-        # Auto-detect available Gemini models
+        # Auto-detect available models
         available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         
         selected_model = None
-        for m_name in ['models/gemini-1.5-flash', 'models/gemini-1.5-pro', 'models/gemini-2.0-flash-exp']:
+        for m_name in ['models/gemini-1.5-flash', 'models/gemini-1.5-pro']:
             if m_name in available_models:
                 selected_model = m_name
                 break
         
         if not selected_model:
             selected_model = available_models[0] if available_models else None
-        
-        if not selected_model:
-            return "Critical Error: No AI model access found for this key."
 
         model = genai.GenerativeModel(selected_model)
         
         reviews_summary = "\n".join([f"- {r}" for r in reviews_list])
         prompt = f"""
-        Act as a Senior E-commerce Consultant. Analyze these Amazon UK customer reviews:
+        Act as a professional E-commerce Strategy Consultant. 
+        Analyze these Amazon UK customer reviews and provide a strategic report in English:
         
         REVIEWS:
         {reviews_summary}
@@ -59,62 +68,59 @@ def analyze_market_intelligence(reviews_list):
         REPORT FORMAT:
         1. MARKET OPPORTUNITY SCORE (0-100)
         2. TOP 3 CUSTOMER PAIN POINTS
-        3. STRATEGIC GROWTH SUGGESTION (Bundle ideas/Improvements)
-        4. OVERALL SENTIMENT (Positive/Neutral/Negative)
-        
-        Response must be in English.
+        3. STRATEGIC GROWTH SUGGESTION
+        4. OVERALL SENTIMENT
         """
         
         response = model.generate_content(prompt)
-        return f"**Analysis Model:** {selected_model}\n\n{response.text}"
+        return f"**Model Used:** {selected_model}\n\n{response.text}"
     except Exception as e:
         return f"AI System Error: {str(e)}"
 
-# --- SCRAPER ENGINE ---
+# --- WEB SCRAPER ENGINE ---
 async def start_data_extraction(url):
     if not url.startswith("http"):
         url = "https://" + url
 
     extracted_reviews = []
     async with async_playwright() as p:
-        # headless=True is mandatory for Cloud servers
-        # We use headless=False for local debugging, but Cloud needs True
-        is_cloud = "STREAMLIT_SERVER_PORT" in os.environ
-        browser = await p.chromium.launch(headless=is_cloud)
-        
+        # headless=True is mandatory for Cloud
+        browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
         page = await context.new_page()
         
         try:
-            st.info("🌐 Accessing Amazon UK...")
+            st.info("🌐 Accessing Amazon UK Server...")
             await page.goto(url, wait_until="domcontentloaded", timeout=60000)
             
-            # 15s wait for Cloud stability or manual local CAPTCHA
-            if not is_cloud:
-                st.warning("⚠️ Local Mode: Solve CAPTCHA if it appears (15s)")
-            await asyncio.sleep(15) 
+            # Static wait for page elements to settle
+            await asyncio.sleep(10) 
             
+            # Scrape reviews
             await page.wait_for_selector("[data-hook='review-body']", timeout=15000)
             elements = page.locator("[data-hook='review-body']")
-            raw_data = await elements.all_inner_texts()
-            extracted_reviews = [text.strip().replace('\n', ' ')[:400] for text in raw_data]
+            count = await elements.count()
+            
+            if count > 0:
+                raw_data = await elements.all_inner_texts()
+                extracted_reviews = [text.strip().replace('\n', ' ')[:400] for text in raw_data]
         except Exception as e:
             st.error(f"Scraper Error: {str(e)}")
         finally:
             await browser.close()
     return extracted_reviews
 
-# --- STREAMLIT UI ---
+# --- USER INTERFACE ---
 st.title("🛡️ E-Com Insight AI: Global Intelligence")
-st.markdown("### Business Strategy & Market Analysis for Amazon UK")
+st.markdown("### Strategic Market Analysis for Amazon UK Products")
 
 url_input = st.text_input("🔗 Paste Amazon UK Product URL:", placeholder="https://www.amazon.co.uk/dp/B09BZR9JFG")
 
-if st.button("Generate Strategic Report"):
+if st.button("Generate Intelligence Report"):
     if url_input:
-        with st.status("🛸 SaaS Engine Working...", expanded=True) as status:
+        with st.status("🛸 SaaS Engine: Processing Data...", expanded=True) as status:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             results = loop.run_until_complete(start_data_extraction(url_input))
@@ -128,9 +134,9 @@ if st.button("Generate Strategic Report"):
                 st.subheader("🤖 AI Strategic Report")
                 st.markdown(report)
                 
-                with st.expander("View Source Data"):
-                    st.table(pd.DataFrame(results, columns=["Captured Review Text"]))
+                with st.expander("Show Captured Sources"):
+                    st.table(pd.DataFrame(results, columns=["Review Snippet"]))
             else:
-                st.error("No reviews found. Try again or check the URL.")
+                st.error("No reviews found. Amazon may be temporarily blocking the request. Please try again.")
     else:
-        st.warning("Please enter a URL.")
+        st.warning("Please provide a product URL.")
